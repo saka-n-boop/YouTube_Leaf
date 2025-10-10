@@ -16,7 +16,7 @@ on:
     - cron: '50 1 * * *'
     # JST 11:00 -> UTC 2:00
     - cron: '0 2 * * *'
-    # JST 12:00 -> UTC 2:00
+    # JST 12:00 -> UTC 3:00
     - cron: '0 3 * * *'
 
   workflow_dispatch:
