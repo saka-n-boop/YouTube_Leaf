@@ -173,7 +173,7 @@ def main():
     # 設定ファイル名（同フォルダに「動画リストconfig.txt」設置してください）
     config_file = '動画リストconfig.txt'
     # GoogleスプレッドシートID（自分で用意し、下記の値を置き換えてください）
-    spreadsheet_id = 'YOUR_SPREADSHEET_ID'
+    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'
 
     # 設定読み込み
     api_key, keywords, start_datetime_jst = read_config(config_file)
@@ -195,4 +195,5 @@ def main():
     print(f"Googleスプレッドシート出力完了: シート={sheet_name}")
 
 if __name__ == "__main__":
+
     main()
