@@ -1,29 +1,29 @@
-﻿import json
+import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+# Google Sheetsの認証スコープ
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 def read_config(file_path):
-    """
-    同フォルダ内のJSONフォーマット設定ファイルから検索条件を取得
-    """
+    """設定ファイル（JSON）からAPIキーなどを読み込む"""
     with open(file_path, 'r', encoding='utf-8') as file:
         config = json.load(file)
     return config['api_key'], config['keywords'], config['start_datetime']
 
 def jst_to_utc(jst_str):
-    """JST日時文字列をUTC(ISO8601)に変換"""
+    """JST日時文字列をUTCのISO8601に変換"""
     jst_dt = datetime.strptime(jst_str, "%Y-%m-%d %H:%M:%S")
     utc_dt = jst_dt - timedelta(hours=9)
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def iso8601_to_duration(iso_duration):
-    """PTxxHxxMxxS形式をHH:MM:SS形式に変換"""
+    """PT表記（YouTube ISO8601）をHH:MM:SS化"""
     pattern = re.compile(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?')
     match = pattern.match(iso_duration)
     if not match:
@@ -34,31 +34,33 @@ def iso8601_to_duration(iso_duration):
     return str(timedelta(hours=hours, minutes=minutes, seconds=seconds))
 
 def convert_to_japan_time(utc_time):
-    """UTC投稿日時→JST文字列変換"""
+    """UTC時刻をJST変換し表示用に"""
     utc_datetime = datetime.strptime(utc_time, "%Y-%m-%dT%H:%M:%SZ")
     japan_datetime = utc_datetime + timedelta(hours=9)
     return japan_datetime.strftime("%Y/%m/%d %H:%M:%S")
 
 def get_current_japan_time():
-    """現在JST時刻（YYYY/MM/DD HH:MM:SS）取得"""
+    """現在時刻 (JST表示)"""
     now_utc = datetime.utcnow()
     now_jst = now_utc + timedelta(hours=9)
     return now_jst.strftime("%Y/%m/%d %H:%M:%S")
 
 def get_current_japan_digit_date():
-    """実行日（JST、半角数字のYYYYMMDD）取得（シート名用）"""
+    """今日の日付 (JST, シート名用 'YYYYMMDD' フォーマット)"""
     now_utc = datetime.utcnow()
     now_jst = now_utc + timedelta(hours=9)
     return now_jst.strftime("%Y%m%d")
 
 def calc_engagement_rate(like_count, comment_count, view_count):
-    """エンゲージメント率計算"""
+    """エンゲージメント率 (％)"""
     if view_count == 0:
         return 0.0
     return round((like_count + comment_count) / view_count * 100, 2)
 
 def get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max_total_results=100):
-    """YouTube検索API → 動画データ取得"""
+    """
+    指定キーワード・期間のYouTube動画情報を100件上限で取得
+    """
     youtube = build('youtube', 'v3', developerKey=api_key)
     start_utc = jst_to_utc(start_datetime_jst)
     end_utc = jst_to_utc(end_datetime_jst)
@@ -117,31 +119,32 @@ def get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max
     return video_data
 
 def merge_and_deduplicate(video_data_list, keywords):
-    """複数キーワードの動画リストを合算・重複除去・タイトルにキーワード含むもののみ"""
+    """重複削除＋キーワードをタイトルに含む動画のみ抽出"""
     merged = {}
     for video_data in video_data_list:
         for video in video_data:
-            # タイトルにどれかのキーワードが含まれる動画のみ
             if any(k in video['title'] for k in keywords):
                 merged[video['video_id']] = video
     return list(merged.values())
 
 def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name):
     """
-    Googleスプレッドシートへ出力。実行日シート（YYYYMMDD）、既存なら削除して作成
+    Googleスプレッドシートに出力（同日シートがあればスキップ用判定に利用する）
     """
+    # サービスアカウント認証
     credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
     creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
 
     sh = gc.open_by_key(spreadsheet_id)
 
-    try:
-        worksheet = sh.worksheet(sheet_name)
-        sh.del_worksheet(worksheet)
-    except gspread.exceptions.WorksheetNotFound:
-        pass
+    # すでに同名シート（例：20251010）が存在すればスキップ
+    existing_sheets = [ws.title for ws in sh.worksheets()]
+    if sheet_name in existing_sheets:
+        print(f"{sheet_name}シートは既に存在しているためスキップします。")
+        return
 
+    # 新規シート追加
     worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
 
     headers = [
@@ -170,20 +173,19 @@ def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name
     worksheet.append_rows(rows, value_input_option='USER_ENTERED')
 
 def main():
-    # 設定ファイル名（同フォルダに「動画リストconfig.txt」設置してください）
+    # 設定ファイル名（動画リストconfig.txt）
     config_file = '動画リストconfig.txt'
-    # GoogleスプレッドシートID（自分で用意し、下記の値を置き換えてください）
-    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'
+    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'  # 必ず自身のスプレッドシートIDを記入
 
-    # 設定読み込み
     api_key, keywords, start_datetime_jst = read_config(config_file)
 
-    # 実行JST日付（シート名を半角数字で生成）
+    # 今日の日付（YYYYMMDD、半角数字）
     sheet_name = get_current_japan_digit_date()
     exec_time_jst = get_current_japan_time()
-    # 終了日時JSTは「今日の10:01:00」固定
+    # 終了日は実行日 10:01:00 JSTに必ず固定
     end_datetime_jst = f"{sheet_name[:4]}-{sheet_name[4:6]}-{sheet_name[6:]} 10:01:00"
 
+    # データ取得・出力
     video_data_list = []
     for keyword in keywords:
         video_data = get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max_total_results=100)
@@ -192,8 +194,7 @@ def main():
     merged_video_data = merge_and_deduplicate(video_data_list, keywords)
     merged_video_data.sort(key=lambda x: x['view_count'], reverse=True)
     export_to_google_sheet(merged_video_data, spreadsheet_id, exec_time_jst, sheet_name)
-    print(f"Googleスプレッドシート出力完了: シート={sheet_name}")
+    print(f"処理完了（シート名 {sheet_name}）")
 
 if __name__ == "__main__":
-
     main()
