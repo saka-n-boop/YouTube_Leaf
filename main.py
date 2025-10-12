@@ -7,7 +7,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# Google Sheetsの認証スコープ
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 def read_config(file_path):
@@ -129,22 +128,14 @@ def merge_and_deduplicate(video_data_list, keywords):
 
 def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name):
     """
-    Googleスプレッドシートに出力（同日シートがあればスキップ用判定に利用する）
+    Googleスプレッドシートに出力（新規シート作成しデータ追加）
     """
     # サービスアカウント認証
     credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
     creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
-
     sh = gc.open_by_key(spreadsheet_id)
 
-    # すでに同名シート（例：20251010）が存在すればスキップ
-    existing_sheets = [ws.title for ws in sh.worksheets()]
-    if sheet_name in existing_sheets:
-        print(f"{sheet_name}シートは既に存在しているためスキップします。")
-        return
-
-    # 新規シート追加
     worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
 
     headers = [
@@ -175,17 +166,26 @@ def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name
 def main():
     # 設定ファイル名（動画リストconfig.txt）
     config_file = '動画リストconfig.txt'
-    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'  # 必ず自身のスプレッドシートIDを記入
+    spreadsheet_id = 'YOUR_SPREADSHEET_ID'  # 自身のスプレッドシートID
 
     api_key, keywords, start_datetime_jst = read_config(config_file)
 
     # 今日の日付（YYYYMMDD、半角数字）
     sheet_name = get_current_japan_digit_date()
     exec_time_jst = get_current_japan_time()
-    # 終了日は実行日 10:01:00 JSTに必ず固定
     end_datetime_jst = f"{sheet_name[:4]}-{sheet_name[4:6]}-{sheet_name[6:]} 10:01:00"
 
-    # データ取得・出力
+    # --- ここでシート存在チェック（APIアクセス前！） ---
+    credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
+    creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(spreadsheet_id)
+    existing_sheets = [ws.title for ws in sh.worksheets()]
+    if sheet_name in existing_sheets:
+        print(f"{sheet_name}シートは既に存在しているためAPIアクセスせずにスキップします。")
+        return
+
+    # --- 以降のみAPIアクセス ---
     video_data_list = []
     for keyword in keywords:
         video_data = get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max_total_results=100)
