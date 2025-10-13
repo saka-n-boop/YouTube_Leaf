@@ -166,7 +166,7 @@ def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name
 def main():
     # 設定ファイル名（動画リストconfig.txt）
     config_file = '動画リストconfig.txt'
-    spreadsheet_id = 'YOUR_SPREADSHEET_ID'  # 自身のスプレッドシートID
+    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'  # 自身のスプレッドシートID
 
     api_key, keywords, start_datetime_jst = read_config(config_file)
 
@@ -198,3 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
