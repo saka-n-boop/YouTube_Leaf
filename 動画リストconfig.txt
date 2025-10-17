@@ -1,6 +1,7 @@
 {
-    "api_key": "AIzaSyA0RCmAM3LX81adGtWxd6YR-weukIiBo5Y",
+    "api_key": "AIzaSyCDttdca12pnjqrhPWGQo6I4__OqNfPzpw",
     "keywords": ["新型リーフ", "新型LEAF", "日産リーフ", "日産LEAF", "リーフ", "LEAF", "リーフ 新型"],
     "start_datetime": "2025-10-08 9:59:00",
     "end_datetime": "2025-10-10 10:01:00"
+
 }
