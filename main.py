@@ -10,10 +10,20 @@ from googleapiclient.discovery import build
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 def read_config(file_path):
-    """設定ファイル（JSON）からAPIキーなどを読み込む"""
+    """設定ファイル（JSON）からキーワードなどを読み込み、APIキーは環境変数から取得する"""
+    # APIキーを環境変数 'YOUTUBE_API_KEY' から取得
+    api_key = os.environ.get("YOUTUBE_API_KEY")
+    if not api_key:
+        # 環境変数が見つからない場合はエラーメッセージを表示してプログラムを終了
+        print("エラー: 環境変数 'YOUTUBE_API_KEY' が設定されていません。")
+        sys.exit(1)
+
+    # 設定ファイルからキーワードと開始日時を読み込む
     with open(file_path, 'r', encoding='utf-8') as file:
         config = json.load(file)
-    return config['api_key'], config['keywords'], config['start_datetime']
+    
+    # configファイル内にapi_keyが含まれていても無視される（環境変数が優先）
+    return api_key, config['keywords'], config['start_datetime']
 
 def jst_to_utc(jst_str):
     """JST日時文字列をUTCのISO8601に変換"""
@@ -101,9 +111,11 @@ def get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max
             published_at_utc = snippet['publishedAt']
             published_at_jst = datetime.strptime(published_at_utc, "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=9)
 
+            # 厳密な時間チェック（YouTube APIのpublishedBefore/Afterは多少曖昧なため）
             if not (start_dt <= published_at_jst <= end_dt):
                 continue
 
+            # 'likeCount'や'commentCount'が存在しない場合があるためgetを使用
             video_data.append({
                 'title': snippet['title'],
                 'channel': snippet['channelTitle'],
@@ -122,6 +134,7 @@ def merge_and_deduplicate(video_data_list, keywords):
     merged = {}
     for video_data in video_data_list:
         for video in video_data:
+            # キーワードがタイトルに含まれているかチェック
             if any(k in video['title'] for k in keywords):
                 merged[video['video_id']] = video
     return list(merged.values())
@@ -130,12 +143,13 @@ def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name
     """
     Googleスプレッドシートに出力（新規シート作成しデータ追加）
     """
-    # サービスアカウント認証
+    # サービスアカウント認証 (GCP_SERVICE_ACCOUNT_KEYは環境変数/Secretsから取得)
     credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
     creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(spreadsheet_id)
 
+    # 新しいシートを作成
     worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
 
     headers = [
@@ -160,42 +174,62 @@ def export_to_google_sheet(video_data, spreadsheet_id, exec_time_jst, sheet_name
             engagement_rate,
             exec_time_jst
         ])
+    
+    # ヘッダーとデータをシートに追加
     worksheet.append_row(headers)
     worksheet.append_rows(rows, value_input_option='USER_ENTERED')
 
 def main():
-    # 設定ファイル名（動画リストconfig.txt）
+    # 設定ファイル名
     config_file = '動画リストconfig.txt'
-    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'  # 自身のスプレッドシートID
+    # 自身のスプレッドシートID
+    spreadsheet_id = '1MloHGh089FVzMxP5migrOpHz5VkGuQ-W0-8Ki9MUhdU'
 
+    # 設定とAPIキーの読み込み（APIキーは環境変数から）
     api_key, keywords, start_datetime_jst = read_config(config_file)
 
-    # 今日の日付（YYYYMMDD、半角数字）
+    # 今日の日付と実行時間をJSTで取得
     sheet_name = get_current_japan_digit_date()
     exec_time_jst = get_current_japan_time()
+    
+    # 検索終了日時を今日の10:01:00 JSTに設定
     end_datetime_jst = f"{sheet_name[:4]}-{sheet_name[4:6]}-{sheet_name[6:]} 10:01:00"
 
-    # --- ここでシート存在チェック（APIアクセス前！） ---
-    credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
+    # --- シート存在チェック（APIアクセス前） ---
+    # GCPサービスアカウント認証
+    try:
+        credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_KEY"])
+    except KeyError:
+        print("エラー: 環境変数 'GCP_SERVICE_ACCOUNT_KEY' が設定されていません。")
+        sys.exit(1)
+        
     creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(spreadsheet_id)
     existing_sheets = [ws.title for ws in sh.worksheets()]
+    
     if sheet_name in existing_sheets:
-        print(f"{sheet_name}シートは既に存在しているためAPIアクセスせずにスキップします。")
+        print(f"✅ {sheet_name}シートは既に存在しているためAPIアクセスせずにスキップします。")
         return
 
-    # --- 以降のみAPIアクセス ---
+    # --- 以降のみYouTube Data APIアクセス ---
     video_data_list = []
+    print(f"➡️ YouTubeデータ取得開始 (キーワード: {len(keywords)}件, 期間: {start_datetime_jst} 〜 {end_datetime_jst})")
     for keyword in keywords:
         video_data = get_youtube_data(api_key, keyword, start_datetime_jst, end_datetime_jst, max_total_results=100)
         video_data_list.append(video_data)
+        print(f"   - キーワード '{keyword}': {len(video_data)}件取得")
 
+    # データ統合、重複排除、タイトルフィルタリング
     merged_video_data = merge_and_deduplicate(video_data_list, keywords)
+    print(f"➡️ フィルタリング・重複排除後: {len(merged_video_data)}件")
+    
+    # 再生回数でソート
     merged_video_data.sort(key=lambda x: x['view_count'], reverse=True)
+    
+    # Googleスプレッドシートに出力
     export_to_google_sheet(merged_video_data, spreadsheet_id, exec_time_jst, sheet_name)
-    print(f"処理完了（シート名 {sheet_name}）")
+    print(f"🎉 処理完了（シート名: {sheet_name}、動画数: {len(merged_video_data)}件）")
 
 if __name__ == "__main__":
     main()
-
