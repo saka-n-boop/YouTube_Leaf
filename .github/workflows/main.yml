@@ -43,6 +43,8 @@ jobs:
 
     - name: Run Scraper
       env:
+      # ここでシークレットを環境変数にマッピング
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
       run: |
         python main.py
